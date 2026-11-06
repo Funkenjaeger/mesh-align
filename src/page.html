@@ -1,0 +1,308 @@
+<title>Mesh Align</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a fixed instrument panel on the left, the 3D view filling the rest; stacked on phones. */
+:root {
+  --bg: #e9edf1; --panel: #f7f9fb; --ink: #1a2027; --muted: #5a6572; --line: #d3dae1;
+  --accent: #2a55c9; --accent-ink: #ffffff; --accent-soft: #dfe7fb;
+  --view: #dde3e9; --mesh: #a3acb6; --grid: #c3cbd3; --grid-major: #8c97a3;
+  --ok: #1d7f47; --ok-soft: #dcf1e4; --need: #5a6572; --need-soft: #e6eaee; --bad: #b5400c; --bad-soft: #fbe5da; --warn: #9a6200; --cut: #d93a3f;
+  --f-ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --f-head: 'IBM Plex Sans Condensed', 'IBM Plex Sans', 'Arial Narrow', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #101418; --panel: #161b21; --ink: #e2e7ec; --muted: #94a0ac; --line: #29313a;
+  --accent: #7b9cff; --accent-ink: #0b1226; --accent-soft: #1e2a4a;
+  --view: #0d1115; --mesh: #79838e; --grid: #222a32; --grid-major: #3a4550;
+  --ok: #4cc386; --ok-soft: #143323; --need: #94a0ac; --need-soft: #222a32; --bad: #f08a5b; --bad-soft: #3a1f14; --warn: #e0a840; --cut: #f0565b;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #101418; --panel: #161b21; --ink: #e2e7ec; --muted: #94a0ac; --line: #29313a;
+  --accent: #7b9cff; --accent-ink: #0b1226; --accent-soft: #1e2a4a;
+  --view: #0d1115; --mesh: #79838e; --grid: #222a32; --grid-major: #3a4550;
+  --ok: #4cc386; --ok-soft: #143323; --need: #94a0ac; --need-soft: #222a32; --bad: #f08a5b; --bad-soft: #3a1f14; --warn: #e0a840; --cut: #f0565b;
+  color-scheme: dark; }
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; line-height: 1.45; }
+.app { display: grid; grid-template-columns: minmax(330px, 380px) 1fr; height: 100%; min-height: 0; }
+.panel { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-width: 0;
+  padding-block: 18px 28px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px;
+  display: flex; flex-direction: column; gap: 22px; }
+.brand h1 { font-family: var(--f-head); font-weight: 600; font-size: 22px; letter-spacing: 0.01em; margin: 0; }
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+section { display: flex; flex-direction: column; gap: 10px; }
+h2 { font-family: var(--f-head); font-weight: 600; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline; }
+h2 small { font-family: var(--f-ui); letter-spacing: 0; text-transform: none; font-weight: 400; font-size: 12px; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0; text-wrap: pretty; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.btn { font: 500 13px/1 var(--f-ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { border-color: var(--grid-major); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+.btn.small { padding: 6px 10px; font-size: 12.5px; align-self: flex-start; }
+button:focus-visible, select:focus-visible, input:focus-visible, label.btn:focus-within, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+dl { margin: 0; }
+.file-info { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+.file-info dt { color: var(--muted); }
+.file-info dd { margin: 0; font-family: var(--f-mono); font-size: 12.5px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.note { font-size: 12.5px; background: var(--accent-soft); border-radius: 6px; padding: 8px 10px; margin: 0; }
+
+.tools { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.tool { font: 500 12.5px/1.1 var(--f-ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 9px 4px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.tool svg { width: 22px; height: 22px; }
+.tool kbd { font: 400 10.5px var(--f-mono); color: var(--muted); }
+.tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tool[aria-pressed="true"] kbd { color: inherit; opacity: 0.8; }
+.settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.settings label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); }
+input[type=number], input[type=text], select { font: 400 13px var(--f-ui); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 5px; padding: 6px 7px; min-width: 0; width: 100%; }
+input[type=number] { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+select:disabled, input:disabled { opacity: 0.5; }
+
+#feat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.feat { display: grid; grid-template-columns: 6px 1fr auto; gap: 10px; align-items: center; padding: 7px 6px 7px 0;
+  border-bottom: 1px solid var(--line); }
+.feat .sw { align-self: stretch; background: var(--fc); border-radius: 3px; }
+.feat.is-hidden .sw { opacity: 0.3; }
+.feat.is-curved .fstat { color: var(--warn); }
+.kv .warn { color: var(--warn); }
+.fmain { min-width: 0; }
+.fname { font-size: 13.5px; }
+.fname b { font-family: var(--f-mono); font-weight: 500; }
+.trim-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; }
+.trim-row #trim-toggle { grid-column: 1 / -1; justify-content: center; }
+.trim-row .btn[aria-pressed="true"] { border-color: var(--cut); color: var(--cut); }
+.trim-pos { display: grid; grid-template-columns: 1fr 88px auto; gap: 8px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.trim-pos input[type=range] { width: 100%; accent-color: var(--cut); }
+#trim-apply:not(:disabled) { background: var(--cut); border-color: var(--cut); color: #fff; }
+.perp-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.perp { font: 500 11px var(--f-mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.role { font: 500 11px var(--f-mono); color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.fstat { font: 400 12px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fact { display: flex; gap: 2px; }
+.ib { width: 28px; height: 28px; border: 0; background: transparent; color: var(--muted); border-radius: 5px; cursor: pointer; display: grid; place-items: center; }
+.ib:hover { background: var(--bg); color: var(--ink); }
+.ib svg { width: 16px; height: 16px; }
+
+.arow { display: grid; grid-template-columns: 76px 52px 1fr auto; gap: 6px; align-items: center; }
+.arow .lbl { font-size: 13px; }
+.arow .lbl small { display: block; color: var(--muted); font-size: 11px; }
+.arow.to { grid-template-columns: 76px 1fr; }
+.flip { font: 500 12px var(--f-ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: pointer; }
+.flip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.origin { display: grid; grid-template-columns: 76px repeat(3, 1fr); gap: 6px; align-items: end; }
+.origin label { display: flex; flex-direction: column; gap: 3px; font: 500 11.5px var(--f-mono); color: var(--muted); }
+.status { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.status p { margin: 0; text-wrap: pretty; }
+.chip { align-self: flex-start; font: 600 11px/1 var(--f-head); letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; }
+.chip[data-kind="ok"] { color: var(--ok); background: var(--ok-soft); }
+.chip[data-kind="need"] { color: var(--need); background: var(--need-soft); }
+.chip[data-kind="bad"] { color: var(--bad); background: var(--bad-soft); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.matrix-wrap { overflow-x: auto; }
+pre#matrix { font: 400 11.5px/1.5 var(--f-mono); margin: 6px 0 0; color: var(--ink); }
+.export label { font-size: 12px; color: var(--muted); }
+
+.view { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--view); }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.hud { position: absolute; left: 12px; right: max(12px, env(safe-area-inset-right, 0px)); top: 12px; display: flex; justify-content: space-between;
+  gap: 10px; align-items: flex-start; pointer-events: none; flex-wrap: wrap; }
+.hud > * { pointer-events: auto; }
+#tool-hint { font-size: 12.5px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; max-width: 46ch; }
+#tool-hint[data-active="yes"] { border-color: var(--accent); color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.seg button { font: 500 12px var(--f-ui); color: var(--ink); background: transparent; border: 0; padding: 6px 9px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.seg button:hover { background: var(--bg); }
+.views { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.legend { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 10px; align-items: center; font: 500 11.5px var(--f-mono);
+  background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; pointer-events: none; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.legend .gs { color: var(--muted); }
+#busy { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--view) 55%, transparent); }
+#busy span { font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; }
+#drop { position: absolute; inset: 10px; border: 2px dashed var(--accent); border-radius: 10px; display: grid; place-items: center;
+  font: 600 15px var(--f-head); color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 70%, transparent); pointer-events: none; }
+#toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; max-width: min(560px, calc(100% - 24px)); font-size: 13px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; box-shadow: 0 4px 18px rgb(0 0 0 / 0.14); }
+#toast[data-kind="bad"] { border-color: var(--bad); color: var(--bad); }
+#toast[data-kind="warn"] { border-color: var(--warn); }
+
+@media (max-width: 820px) {
+  html, body { height: auto; }
+  .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+  .view { order: -1; }
+  .panel { border-right: 0; border-top: 1px solid var(--line); overflow: visible; padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .legend { bottom: 12px; }
+  #toast { bottom: 52px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="app">
+  <aside class="panel">
+    <header class="brand">
+      <h1>Mesh Align</h1>
+      <p>Best-fit 3-2-1 alignment for scan meshes</p>
+    </header>
+
+    <section aria-labelledby="h-scan">
+      <h2 id="h-scan">Scan</h2>
+      <div class="row">
+        <label class="btn primary" for="file-in">Open scan…</label>
+        <input type="file" id="file-in" accept=".3mf,.stl,.obj,.ply" hidden>
+        <button class="btn" id="example-btn" type="button">Reload example</button>
+      </div>
+      <p class="hint">3MF, STL, OBJ or PLY, or drop a file on the view. The file is read in your browser and never uploaded.</p>
+      <p class="note" id="example-note" hidden>This is a generated example: a 120 × 80 × 25 mm block with two bosses and a tooling ball, tilted and offset like a raw scan, with 0.025 mm of noise. Four features are already fitted.</p>
+      <dl class="file-info" id="file-info" hidden>
+        <dt>File</dt><dd id="fi-name"></dd>
+        <dt>Triangles</dt><dd id="fi-tris"></dd>
+        <dt id="fi-size-l">Size</dt><dd id="fi-size"></dd>
+        <dt>Units</dt><dd id="fi-unit"></dd>
+      </dl>
+      <div class="row" id="unit-row" hidden>
+        <label for="unit-sel" class="hint">STL, OBJ and PLY carry no units. This file is in</label>
+        <select id="unit-sel" style="width:auto">
+          <option value="millimeter">mm</option><option value="inch">inches</option><option value="centimeter">cm</option><option value="meter">meters</option>
+        </select>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-feat">
+      <h2 id="h-feat">Features <small>click the mesh to fit</small></h2>
+      <div class="tools" role="toolbar" aria-label="Feature tools">
+        <button class="tool" type="button" data-tool="plane" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15 10 8h11l-7 7Z" fill="currentColor" opacity=".22" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>Plane<kbd>P</kbd></button>
+        <button class="tool" type="button" data-tool="cylinder" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="6" ry="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 6v12c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4V6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>Cylinder<kbd>C</kbd></button>
+        <button class="tool" type="button" data-tool="sphere" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="1.5"/><ellipse cx="12" cy="12" rx="7.5" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg>Sphere<kbd>S</kbd></button>
+        <button class="tool" type="button" data-tool="point" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v5M12 15v5M4 12h5M15 12h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/></svg>Point<kbd>T</kbd></button>
+        <button class="tool" type="button" data-tool="symmetry" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.5 2"/><path d="M9.5 6 4 12l5.5 6Z" fill="currentColor" opacity=".25" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M14.5 6 20 12l-5.5 6Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Mirror<kbd>M</kbd></button>
+      </div>
+      <div class="row"><button class="btn small" id="auto-sym" type="button">Find symmetry plane automatically</button></div>
+      <div class="perp-row">
+        <label for="perp-ref">Keep new planes perpendicular to</label>
+        <select id="perp-ref"><option value="">nothing (free)</option></select>
+      </div>
+      <div class="settings">
+        <label for="set-tol">Tolerance, mm<input type="number" id="set-tol" value="0.2" min="0.005" step="0.01"></label>
+        <label for="set-angle">Max normal angle, °<input type="number" id="set-angle" value="20" min="2" max="80" step="1"></label>
+        <label for="set-seed">Seed radius, mm<input type="number" id="set-seed" value="3" min="0.2" step="0.5"></label>
+      </div>
+      <p class="hint">Mirror fits a symmetry plane, the best datum on rounded parts: click a point on each side, or let it search.</p>
+      <p class="hint">Points join a feature while they sit within the tolerance of the fitted surface and their normal is within the angle. Use about 3× your scanner's noise; these scanners measure 0.04–0.08 mm.</p>
+      <p class="hint" id="feat-empty" hidden>No features yet. Pick a tool and click the mesh.</p>
+      <ul id="feat-list"></ul>
+    </section>
+
+    <section aria-labelledby="h-align">
+      <h2 id="h-align">Alignment</h2>
+      <div class="arow">
+        <span class="lbl">Primary<small>direction</small></span>
+        <select id="p-axis" aria-label="Primary sets axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+        <select id="p-feat" aria-label="Primary feature"></select>
+        <button class="flip" id="p-flip" type="button" aria-pressed="false" title="Reverse the primary direction">Flip</button>
+      </div>
+      <div class="arow">
+        <span class="lbl">Secondary<small>rotation</small></span>
+        <select id="s-axis" aria-label="Secondary sets axis"><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+        <select id="s-feat" aria-label="Secondary feature"></select>
+        <button class="flip" id="s-flip" type="button" aria-pressed="false" title="Reverse the secondary direction">Flip</button>
+      </div>
+      <div class="arow to">
+        <span class="lbl"><small>using</small></span>
+        <select id="s-to" aria-label="Secondary uses its own direction or a line to another feature"></select>
+      </div>
+      <div class="origin">
+        <span class="lbl" style="font-size:13px">Origin<small style="display:block;color:var(--muted);font-size:11px">position</small></span>
+        <label for="o-x">X₀<select id="o-x"></select></label>
+        <label for="o-y">Y₀<select id="o-y"></select></label>
+        <label for="o-z">Z₀<select id="o-z"></select></label>
+      </div>
+      <div class="status" id="align-status" role="status"></div>
+      <details>
+        <summary>Transform matrix (rotation │ translation, mm)</summary>
+        <div class="matrix-wrap"><pre id="matrix"></pre></div>
+      </details>
+      <div class="row">
+        <label class="btn small" for="tf-in">Apply a saved transform…</label>
+        <input type="file" id="tf-in" accept=".3mf,.json" hidden>
+        <span class="hint">from a 3MF saved here, or a .json</span>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-trim">
+      <h2 id="h-trim">Trim <small id="trim-frame">aligned frame</small></h2>
+      <div class="trim-row">
+        <button class="btn" id="trim-toggle" type="button" aria-pressed="false">Show cutting plane</button>
+        <select id="trim-axis" aria-label="Cutting plane axis"><option value="x">across X</option><option value="y">across Y</option><option value="z" selected>across Z</option></select>
+        <select id="trim-side" aria-label="Which side to remove"><option value="below">remove below</option><option value="above">remove above</option></select>
+      </div>
+      <div class="trim-pos">
+        <input type="range" id="trim-range" aria-label="Cutting plane position">
+        <input type="number" id="trim-at" step="0.05" aria-label="Cutting plane position in mm"><span>mm</span>
+      </div>
+      <p class="hint" id="trim-count" role="status"></p>
+      <div class="row">
+        <button class="btn primary" id="trim-apply" type="button" disabled>Remove red part</button>
+        <button class="btn" id="trim-undo" type="button" hidden>Undo last trim</button>
+      </div>
+      <p class="hint">Drag the red plane in the view, or set its position here. Every triangle touching the red side is removed.</p>
+    </section>
+
+    <section aria-labelledby="h-export" class="export">
+      <h2 id="h-export">Export</h2>
+      <label for="out-name">File name</label>
+      <input type="text" id="out-name" spellcheck="false">
+      <button class="btn primary" id="export-btn" type="button">Save aligned 3MF</button>
+      <p class="hint" id="export-hint"></p>
+      <p class="hint">In Fusion, use Insert → Insert Mesh with Center and Move to ground turned off, or the mesh moves again.</p>
+    </section>
+  </aside>
+
+  <main class="view" id="view">
+    <canvas id="gl" aria-label="3D view of the mesh"></canvas>
+    <div class="hud">
+      <div id="tool-hint" data-active="no"></div>
+      <div class="views">
+        <div class="seg" role="group" aria-label="Coordinate frame">
+          <button type="button" data-frame="aligned" aria-pressed="true">Aligned</button>
+          <button type="button" data-frame="original" aria-pressed="false">As scanned</button>
+        </div>
+        <div class="seg" role="group" aria-label="Projection">
+          <button type="button" data-proj="persp" aria-pressed="true" title="Perspective view">Persp</button>
+          <button type="button" data-proj="ortho" aria-pressed="false" title="Orthographic view: no perspective distortion, for careful picking">Ortho</button>
+        </div>
+        <div class="seg" role="group" aria-label="View direction">
+          <button type="button" data-view="top">Top</button>
+          <button type="button" data-view="front">Front</button>
+          <button type="button" data-view="right">Right</button>
+          <button type="button" data-view="iso">Iso</button>
+        </div>
+      </div>
+    </div>
+    <div class="legend" aria-hidden="true"><span><i style="background:#e5484d"></i>X</span><span><i style="background:#30a46c"></i>Y</span><span><i style="background:#3e63dd"></i>Z</span><span class="gs" id="grid-step"></span></div>
+    <div id="busy" hidden><span id="busy-text">Working…</span></div>
+    <div id="drop" hidden>Drop a scan to open it</div>
+    <div id="toast" role="status" hidden></div>
+  </main>
+</div>
+
+<script>
+/*BUNDLE*/
+</script>

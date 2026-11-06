@@ -1,0 +1,2 @@
+{ "name": "mesh-align", "private": true, "type": "module",
+  "devDependencies": { "three": "0.160.0", "esbuild": "0.24.0" } }
