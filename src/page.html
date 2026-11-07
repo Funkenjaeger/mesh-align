@@ -95,6 +95,7 @@ select:disabled, input:disabled { opacity: 0.5; }
 .ib { width: 28px; height: 28px; border: 0; background: transparent; color: var(--muted); border-radius: 5px; cursor: pointer; display: grid; place-items: center; }
 .ib:hover { background: var(--bg); color: var(--ink); }
 .ib svg { width: 16px; height: 16px; }
+.ib[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 
 .arow { display: grid; grid-template-columns: 76px 52px 1fr auto; gap: 6px; align-items: center; }
 .arow .lbl { font-size: 13px; }
@@ -204,6 +205,7 @@ pre#matrix { font: 400 11.5px/1.5 var(--f-mono); margin: 6px 0 0; color: var(--i
         <label for="set-angle">Max normal angle, °<input type="number" id="set-angle" value="20" min="2" max="80" step="1"></label>
         <label for="set-seed">Seed radius, mm<input type="number" id="set-seed" value="3" min="0.2" step="0.5"></label>
       </div>
+      <p class="hint">A plane can span separate faces that lie in it, such as the tops of two bosses. Spread-out faces set its tilt far better than one small face. Use the + button on a plane, or Shift-click with the Plane tool.</p>
       <p class="hint">Mirror fits a symmetry plane, the best datum on rounded parts: click a point on each side, or let it search.</p>
       <p class="hint">Points join a feature while they sit within the tolerance of the fitted surface and their normal is within the angle. Use about 3× your scanner's noise; these scanners measure 0.04–0.08 mm.</p>
       <p class="hint" id="feat-empty" hidden>No features yet. Pick a tool and click the mesh.</p>

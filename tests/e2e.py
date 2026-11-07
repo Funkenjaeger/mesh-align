@@ -153,6 +153,34 @@ with sync_playwright() as p:
     page.wait_for_timeout(200)
     check(page.evaluate("window.__meshAlign.camera.isPerspectiveCamera === true"), "Persp switches back")
 
+    # Multi-face plane: click boss A's top, Shift-click boss B's top, Shift-click it again to drop it.
+    page.click("[data-view=iso]"); page.wait_for_timeout(300)
+    page.keyboard.press("p")
+    nf = page.evaluate("window.__meshAlign.S.features.length")
+    page.mouse.click(*page.evaluate(PROJ, [34, 43, 35]))
+    page.wait_for_function(f"window.__meshAlign.S.features.length === {nf + 1}", timeout=20000)
+    LAST = "window.__meshAlign.S.features[window.__meshAlign.S.features.length - 1]"
+    n1 = page.evaluate(f"{LAST}.stats.n")
+    page.keyboard.down("Shift"); page.mouse.click(*page.evaluate(PROJ, [91, 38, 35])); page.keyboard.up("Shift")
+    page.wait_for_function(f"!!{LAST}.stats.faces", timeout=20000)
+    mf = page.evaluate(f"(() => {{ const f = {LAST}; return {{faces: f.stats.faces.length, n: f.stats.n, k: window.__meshAlign.S.features.length, row: document.getElementById('feat-list').innerText.includes('2 faces')}}; }})()")
+    check(mf["faces"] == 2 and mf["n"] > n1 * 1.8 and mf["k"] == nf + 1 and mf["row"], f"Shift-click adds boss B's top to the same plane ({n1} -> {mf['n']} pts, row says 2 faces)")
+    page.keyboard.down("Shift"); page.mouse.click(*page.evaluate(PROJ, [91, 38, 35])); page.keyboard.up("Shift")
+    page.wait_for_function(f"!{LAST}.stats.faces", timeout=20000)
+    check(page.evaluate(f"{LAST}.stats.n") == n1, "Shift-click on a face it has drops that face again")
+    # The + button arms face adding without Shift; a face 10 mm lower is refused and leaves the plane as it was.
+    page.keyboard.press("Escape")
+    page.click(f"#feat-list li:last-child button[data-act=faces]")
+    check("Adding faces to" in page.inner_text("#tool-hint"), "the + button arms face adding")
+    page.mouse.click(*page.evaluate(PROJ, [100, 70, 25])); page.wait_for_timeout(800)
+    check("not in the same plane" in page.inner_text("#toast") and page.evaluate(f"{LAST}.stats.n") == n1, "a face off the plane is refused and the plane is unchanged")
+    page.mouse.click(*page.evaluate(PROJ, [91, 38, 35]))
+    page.wait_for_function(f"!!{LAST}.stats.faces", timeout=20000)
+    check(page.evaluate("window.__meshAlign.S.features.length") == nf + 1, "a plain click in + mode adds the face instead of a new plane")
+    page.screenshot(path=f"{OUT}/multi-face.png")
+    page.keyboard.press("Escape")
+    check(page.evaluate("window.__meshAlign.S.addTo") is None, "Esc ends face adding")
+
     # Error message path: cylinder on the flat top face
     page.keyboard.press("c")
     page.wait_for_timeout(200)

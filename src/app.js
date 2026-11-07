@@ -4,7 +4,7 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { zipSync, unzipSync, strToU8 } from 'three/addons/libs/fflate.module.js';
-import { prepareMesh, weldVertices, growFeature, solveAlignment, featureDirection, transformPositions,
+import { prepareMesh, weldVertices, growFeature, growPlaneFaces, solveAlignment, featureDirection, transformPositions,
   build3MF, parse3MF, checkRigid, projectedExtents, makeSamplePart, nearestVertex, UNIT_MM,
   frameCoord, cutMask, trimMesh, countCutTris,
   refineSymmetry, symmetryFromPoints, findSymmetry, findSymmetryPerp, readEmbeddedTransform } from './core.js';
@@ -16,7 +16,7 @@ const PREFIX = { plane: 'P', cylinder: 'C', sphere: 'S', point: 'Pt', symmetry: 
 const SYM_FIRST = 'Mirror: click a point on one side of the part, then the matching point on the other side. Or use "Find automatically".';
 const TOOL_HINT = {
   symmetry: SYM_FIRST,
-  plane: 'Plane: click a flat face. The fit grows across the whole face.',
+  plane: 'Plane: click a flat face. The fit grows across the whole face. Shift-click a separate face in the same plane to add it to the last plane.',
   cylinder: 'Cylinder: click a bore or boss wall.',
   sphere: 'Sphere: click a tooling ball or other spherical surface.',
   point: 'Point: click a spot on the surface. Raw points are less accurate than fitted features.',
@@ -25,7 +25,7 @@ const AXIS_COL = ['#e5484d', '#30a46c', '#3e63dd'];
 
 const S = {
   mesh: null, name: '', source: null, features: [], seq: 0, count: {},
-  tool: null, view: 'aligned', result: null, override: null, example: false,
+  tool: null, addTo: null, lastPlane: null, view: 'aligned', result: null, override: null, example: false,
   spec: blankSpec(),
 };
 // Cutting plane state: position `at` along `axis` of the displayed frame; `removed` marks vertices to cut.
@@ -271,7 +271,10 @@ function fitFeature(f) {
     else { delete f.settings.perpRef; delete f.settings.perpTo; }
   }
   if (f.type !== 'symmetry' && f.seedVertex == null && f.seedPoint) f.seedVertex = nearestVertex(S.mesh, f.seedPoint);
-  const r = f.type === 'symmetry' ? (f.preset || refineSymmetry(S.mesh, f.init, f.settings)) : growFeature(S.mesh, f.type, f.seedVertex, f.settings);
+  for (const m of f.more || []) if (m.vertex == null) m.vertex = nearestVertex(S.mesh, m.point);
+  const r = f.type === 'symmetry' ? (f.preset || refineSymmetry(S.mesh, f.init, f.settings))
+    : f.more?.length ? growPlaneFaces(S.mesh, [f.seedVertex, ...f.more.map((m) => m.vertex)], f.settings)
+    : growFeature(S.mesh, f.type, f.seedVertex, f.settings);
   delete f.preset;
   if (r.error) { toast(r.error, 'bad'); return false; }
   f.fit = r.fit; f.vertices = r.vertices; f.stats = r.stats;
@@ -285,11 +288,38 @@ function addFeatureAt(type, seedVertex, seedPoint, quiet = false, extra = {}) {
     seedVertex, seedPoint, hidden: false, settings: settings(), ...extra };
   if (!fitFeature(f)) { S.count[type]--; S.seq--; return null; }
   S.features.push(f);
+  if (type === 'plane') S.lastPlane = f.id;
   if (!quiet) autoAssign(f);
   buildVisual(f); paintColors();
   if (!quiet) { solve(); renderAll(); }
   return f;
 }
+
+// Add a separate face in the same plane to plane f, or drop the face the click landed on.
+function toggleFace(f, vertex, point) {
+  const faces = [{ vertex: f.seedVertex, point: f.seedPoint }, ...(f.more || [])];
+  const sizes = f.stats.faces ? f.stats.faces.map((x) => x.n) : [f.stats.n];
+  let at = -1;
+  for (let i = 0, off = 0; i < sizes.length; off += sizes[i++]) if (f.vertices.subarray(off, off + sizes[i]).includes(vertex)) at = i;
+  if (at >= 0 && faces.length === 1) { toast(`That face is ${f.name}'s only face. Click a separate face in the same plane to add it.`); return; }
+  const old = { seedVertex: f.seedVertex, seedPoint: f.seedPoint, more: f.more, fit: f.fit, vertices: f.vertices, stats: f.stats };
+  const next = at >= 0 ? faces.filter((_, i) => i !== at) : [...faces, { vertex, point }];
+  f.seedVertex = next[0].vertex; f.seedPoint = next[0].point; f.more = next.slice(1);
+  if (!fitFeature(f)) { Object.assign(f, old); return; }
+  S.lastPlane = f.id;
+  buildVisual(f); paintColors(); solve(); renderAll();
+  toast(at >= 0 ? `Face ${at + 1} dropped from ${f.name}: ${statLine(f)}` : `${f.name} now spans ${next.length} faces. ${faceLine(f)}`, 'info');
+}
+function faceLine(f) {
+  const fs = f.stats.faces;
+  if (!fs) return statLine(f);
+  const off = Math.max(...fs.map((x) => Math.abs(x.offset))), tilt = Math.max(...fs.map((x) => x.tilt));
+  return `They span ${f.stats.span.toFixed(0)} mm and each sits within ${f3(off)} mm of the shared plane. Fitted alone, a face would tilt up to ${tilt.toFixed(3)}° from it.`;
+}
+const planeTarget = (shift) => {
+  const id = S.addTo || (shift ? S.lastPlane : null);
+  return S.features.find((x) => x.id === id && x.type === 'plane') || null;
+};
 
 function autoAssign(f) {
   const d = featureDirection(f);
@@ -304,6 +334,7 @@ function autoAssign(f) {
 function removeFeature(id) {
   const f = S.features.find((x) => x.id === id);
   if (!f) return;
+  if (S.addTo === id) setTool(null);
   disposeVisual(f);
   S.features = S.features.filter((x) => x !== f);
   const sp = S.spec;
@@ -416,6 +447,8 @@ canvas.addEventListener('pointerup', (e) => {
     });
     return;
   }
+  const target = tool === 'plane' && planeTarget(e.shiftKey);
+  if (target) { busy(`Refitting ${target.name} across its faces…`, () => toggleFace(target, best, here)); return; }
   busy(`Fitting ${TYPE_LABEL[tool].toLowerCase()}…`, () => {
     const f = addFeatureAt(tool, best, here);
     if (f && f.stats?.curved) toast(`${f.name} is not flat: at double tolerance it takes ${Math.round(f.stats.wideGrow * 100)}% more surface. The plane covers a ${f.fit.extent.w.toFixed(0)} × ${f.fit.extent.h.toFixed(0)} mm strip, and its direction depends on where you click.`, 'warn');
@@ -454,11 +487,16 @@ function autoSymmetry() {
   });
 }
 
-function setTool(t) {
+// setTool(t) toggles tool t; setTool('plane', id) arms the plane tool to add faces to plane id.
+function setTool(t, addTo = null) {
   clearPending();
-  S.tool = S.tool === t ? null : t;
+  S.tool = addTo ? 'plane' : S.tool === t ? null : t;
+  S.addTo = addTo;
   for (const b of document.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === S.tool));
-  $('tool-hint').textContent = S.tool ? TOOL_HINT[S.tool] : 'Pick a tool, then click the mesh. Drag to orbit, right-drag to pan, scroll to zoom.';
+  const into = addTo && S.features.find((x) => x.id === addTo);
+  $('tool-hint').textContent = into ? `Adding faces to ${into.name}: click each separate face that lies in the same plane. Click one of its faces again to drop it. Esc when done.`
+    : S.tool ? TOOL_HINT[S.tool] : 'Pick a tool, then click the mesh. Drag to orbit, right-drag to pan, scroll to zoom.';
+  renderFeatures();
   $('tool-hint').dataset.active = S.tool ? 'yes' : 'no';
   canvas.style.cursor = S.tool ? 'crosshair' : 'grab';
 }
@@ -639,7 +677,7 @@ function statLine(f) {
   if (f.type === 'point') return `at ${f.fit.position.map(f3).join(', ')} (scan coordinates)`;
   if (f.type === 'symmetry') return `${Math.round(s.mirrored * 100)}% mirrors within ${s.tol} mm · RMS ${f3(s.rms)} mm`;
   const pts = `${s.n.toLocaleString()} pts`;
-  if (f.type === 'plane') return `${pts} · RMS ${f3(s.rms)} · flatness ${f3(s.pv)} mm${s.curved ? ' · not flat' : ''}`;
+  if (f.type === 'plane') return `${s.faces ? `${s.faces.length} faces · ` : ''}${pts} · RMS ${f3(s.rms)} · flatness ${f3(s.pv)} mm${s.curved ? ' · not flat' : ''}`;
   return `Ø ${f3(2 * f.fit.radius)} mm · ${pts} · RMS ${f3(s.rms)} mm`;
 }
 
@@ -664,6 +702,7 @@ function renderFile() {
 const ICONS = {
   eye: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6S15 16 10 16 1.5 10 1.5 10Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="10" r="2.6" fill="currentColor"/></svg>',
   eyeOff: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M1.5 10S5 4 10 4s8.5 6 8.5 6S15 16 10 16 1.5 10 1.5 10Z" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".45"/><path d="M3 17 17 3" stroke="currentColor" stroke-width="1.6"/></svg>',
+  faces: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M14.5 5v8M10.5 9h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   refit: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-2-4.5M16 3v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   del: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
 };
@@ -678,6 +717,7 @@ function renderFeatures() {
         <div class="fstat">${escH(statLine(f))}</div></div>
       <div class="fact">
         <button class="ib" data-act="hide" data-id="${f.id}" title="${f.hidden ? 'Show' : 'Hide'} ${f.name}" aria-label="${f.hidden ? 'Show' : 'Hide'} ${f.name}">${f.hidden ? ICONS.eyeOff : ICONS.eye}</button>
+        ${f.type === 'plane' ? `<button class="ib" data-act="faces" data-id="${f.id}" aria-pressed="${S.addTo === f.id}" title="Add separate faces in the same plane to ${f.name}" aria-label="Add faces to ${f.name}">${ICONS.faces}</button>` : ''}
         ${f.type === 'point' ? '' : `<button class="ib" data-act="refit" data-id="${f.id}" title="Refit ${f.name} with the current fit settings" aria-label="Refit ${f.name}">${ICONS.refit}</button>`}
         <button class="ib" data-act="del" data-id="${f.id}" title="Delete ${f.name}" aria-label="Delete ${f.name}">${ICONS.del}</button>
       </div>
@@ -861,6 +901,7 @@ $('feat-list').addEventListener('click', (e) => {
   const f = S.features.find((x) => x.id === b.dataset.id);
   if (!f) return;
   if (b.dataset.act === 'del') removeFeature(f.id);
+  else if (b.dataset.act === 'faces') setTool('plane', S.addTo === f.id ? null : f.id);
   else if (b.dataset.act === 'hide') { f.hidden = !f.hidden; f.obj && (f.obj.visible = !f.hidden); paintColors(); renderFeatures(); }
   else if (b.dataset.act === 'refit') busy(`Refitting ${f.name}…`, () => {
     const old = { fit: f.fit, vertices: f.vertices, stats: f.stats, settings: f.settings };

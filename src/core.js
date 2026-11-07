@@ -444,11 +444,33 @@ export function growFeature(mesh, type, seed, opts = {}) {
   const ext = extentOf(P, region);
   if ((type === 'cylinder' || type === 'sphere') && fit.radius > 40 * ext) return { error: FLAT_MSG[type] };
 
-  const res = residualFn(fit);
+  const stats = regionStats(mesh, fit, region, tol, cosA);
+  finishFit(fit, P, region);
+  return { fit, vertices: Uint32Array.from(region), stats };
+}
+
+// Name the face that does not lie in the others' plane: with two faces the one picked last,
+// otherwise the one farthest from the plane through the rest.
+function misfit(own, P, N, perpTo, deg) {
+  let worst = null;
+  for (let i = own.length - 1; i >= (own.length === 2 ? 1 : 0); i--) {
+    const rest = own.filter((_, j) => j !== i).flatMap((r) => Array.from(r.vertices));
+    const ref = fitPlane(P, N, rest, perpTo), res = residualFn(ref);
+    let off = 0;
+    for (const v of own[i].vertices) off += res(P, v);
+    off = Math.abs(off / own[i].vertices.length);
+    if (!worst || off > worst.off) worst = { i, off, tilt: deg(own[i].fit.normal, ref.normal) };
+  }
+  const { i, off, tilt } = worst, others = own.length === 2 ? 'face 1' : 'the other faces';
+  return { error: `Face ${i + 1} is not in the same plane as ${others}: it sits ${off.toFixed(3)} mm off their plane and is tilted ${tilt.toFixed(2)}° to it. Fit it as its own plane, or raise the tolerance.`, face: i };
+}
+
+function regionStats(mesh, fit, region, tol, cosA) {
+  const P = mesh.positions, N = mesh.normals, res = residualFn(fit);
   let ss = 0, mx = 0, lo = Infinity, hi = -Infinity;
   for (const v of region) { const e = res(P, v); ss += e * e; mx = Math.max(mx, Math.abs(e)); lo = Math.min(lo, e); hi = Math.max(hi, e); }
   const stats = { n: region.length, rms: Math.sqrt(ss / region.length), maxAbs: mx, pv: hi - lo };
-  if (type === 'plane') {
+  if (fit.type === 'plane') {
     // Curvature check: a flat face barely grows at double tolerance; a curved one keeps
     // taking surface and its error grows with it.
     const nok = normalFn(fit, cosA);
@@ -459,6 +481,59 @@ export function growFeature(mesh, type, seed, opts = {}) {
     stats.wideRms = Math.sqrt(ss2 / wide.length) / (stats.rms || 1e-12);
     stats.curved = stats.wideGrow > 0.08 && stats.wideRms > 1.35;
   }
+  return stats;
+}
+
+// One plane fitted across several separate faces that lie in it, one seed vertex per face.
+// The faces are spread apart, so the plane's tilt rests on a long baseline instead of on one
+// small face. Each face is grown on its own first, then all of them are regrown against the
+// shared fit until it settles. A face that does not lie in the shared plane is refused.
+// Returns growFeature's shape; `vertices` holds the faces in seed order, and stats.faces gives
+// each face's point count, mean offset from the shared plane (mm) and own tilt to it (deg).
+export function growPlaneFaces(mesh, seeds, opts = {}) {
+  if (seeds.length === 1) return growFeature(mesh, 'plane', seeds[0], opts);
+  const tol = opts.tol ?? 0.2, maxAngle = opts.maxAngle ?? 20, cosA = Math.cos((maxAngle * Math.PI) / 180);
+  const P = mesh.positions, N = mesh.normals;
+  const deg = (a, b) => (Math.acos(Math.min(1, Math.abs(dot(a, b)))) * 180) / Math.PI;
+  const mark = new Int32Array(mesh.nV).fill(-1);
+  const own = [];
+  for (let i = 0; i < seeds.length; i++) {
+    if (mark[seeds[i]] >= 0) return { error: `Faces ${mark[seeds[i]] + 1} and ${i + 1} are the same face.`, face: i };
+    const r = growFeature(mesh, 'plane', seeds[i], opts);
+    if (r.error) return { error: `Face ${i + 1}: ${r.error}`, face: i };
+    const c = i > 0 ? dot(r.fit.normal, own[0].fit.normal) : 1;
+    if (c < 0) return { error: `Face ${i + 1} faces the opposite way to face 1. Fit it as its own plane.`, face: i };
+    if (c < cosA) return { error: `Face ${i + 1} is tilted ${deg(r.fit.normal, own[0].fit.normal).toFixed(1)}° to face 1, so it is not in the same plane. Fit it as its own plane.`, face: i };
+    for (const v of r.vertices) if (mark[v] < 0) mark[v] = i;
+    own.push(r);
+  }
+
+  const joint = (parts) => fitPlane(P, N, parts.flat(), opts.perpTo);
+  let parts = own.map((r) => Array.from(r.vertices)), fit = joint(parts), last = 0;
+  for (let it = 0; it < 12; it++) {
+    const res = residualFn(fit), nok = normalFn(fit, cosA);
+    const accept = (v) => Math.abs(res(P, v)) <= tol && nok(P, N, v);
+    const seen = new Uint8Array(mesh.nV), next = [];
+    for (let i = 0; i < parts.length; i++) {
+      // Faces that touch are one face: keep each vertex in the first face that reached it.
+      const grown = flood(mesh, parts[i].filter(accept), accept).filter((v) => !seen[v] && (seen[v] = 1));
+      if (grown.length < Math.max(12, 0.5 * own[i].stats.n)) return misfit(own, P, N, opts.perpTo, deg);
+      next.push(grown);
+    }
+    const total = next.reduce((a, g) => a + g.length, 0);
+    parts = next; fit = joint(parts);
+    if (Math.abs(total - last) <= Math.max(2, total * 5e-4)) break;
+    last = total;
+  }
+
+  const region = parts.flat(), res = residualFn(fit);
+  const stats = regionStats(mesh, fit, region, tol, cosA);
+  stats.faces = parts.map((g) => {
+    let off = 0;
+    for (const v of g) off += res(P, v);
+    return { n: g.length, offset: off / g.length, tilt: deg(fitPlane(P, N, g, opts.perpTo).normal, fit.normal) };
+  });
+  stats.span = extentOf(P, region) * 2;
   finishFit(fit, P, region);
   return { fit, vertices: Uint32Array.from(region), stats };
 }
@@ -1152,6 +1227,7 @@ export function makeSamplePart({ noise = 0.025, seed = 7, density = 1 } = {}) {
   const probes = Object.fromEntries(Object.entries({
     bottom: [60, 40, 0], top: [100, 70, H], front: [60, 0, 12], back: [60, W, 12], left: [0, 40, 12], right: [L, 40, 12],
     bossA: [40, 40, H + 5], bossB: [96, 40, H + 5], ball: [60, 18, H + 12.7],
+    bossATop: [34, 43, H + 10], bossBTop: [91, 38, H + 10],
   }).map(([k, p]) => [k, pose(p)]));
   const Rinv = [[Rm[0][0], Rm[1][0], Rm[2][0]], [Rm[0][1], Rm[1][1], Rm[2][1]], [Rm[0][2], Rm[1][2], Rm[2][2]]];
   const tinv = Rinv.map((r) => -dot(r, tr));

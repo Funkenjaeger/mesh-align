@@ -40,6 +40,36 @@ grow('S1', 'sphere', 'ball', (f) => check(near(f.fit.radius, 6.35, 0.02), `ball 
 const flatCyl = C.growFeature(mesh, 'cylinder', C.nearestVertex(mesh, part.probes.top), opts);
 check(!!flatCyl.error, `cylinder on a flat face is refused: ${flatCyl.error || 'NOT refused'}`);
 
+// Multi-face plane: the two boss tops are separate faces in the plane z = 35.
+{
+  const T = part.truth;
+  const tiltZ = (n) => Math.acos(Math.min(1, Math.abs(T[2][0] * n[0] + T[2][1] * n[1] + T[2][2] * n[2]))) * 180 / Math.PI;
+  const zOf = (p) => T[2][0] * p[0] + T[2][1] * p[1] + T[2][2] * p[2] + T[2][3];
+  const sv = (k) => C.nearestVertex(mesh, part.probes[k]);
+  const a = C.growFeature(mesh, 'plane', sv('bossATop'), opts), b = C.growFeature(mesh, 'plane', sv('bossBTop'), opts);
+  const j = C.growPlaneFaces(mesh, [sv('bossATop'), sv('bossBTop')], opts);
+  if (a.error || b.error || j.error) check(false, `boss-top planes: ${a.error || b.error || j.error}`);
+  else {
+    const single = Math.min(tiltZ(a.fit.normal), tiltZ(b.fit.normal)), both = tiltZ(j.fit.normal);
+    check(j.stats.faces.length === 2 && j.stats.n === a.stats.n + b.stats.n && j.vertices.length === j.stats.n,
+      `two boss tops make one plane of ${j.stats.n} pts (${a.stats.n} + ${b.stats.n})`);
+    check(both < 0.01 && both < single / 4 && near(zOf(j.fit.point), 35, 0.005),
+      `two faces tilt ${both.toFixed(4)}° vs ${single.toFixed(4)}° for the better face alone; plane at z=${zOf(j.fit.point).toFixed(4)}`);
+    check(j.stats.faces.every((f) => Math.abs(f.offset) < 0.005) && !j.stats.curved && j.stats.span > 70,
+      `faces sit on the shared plane (offsets ${j.stats.faces.map((f) => f.offset.toFixed(4))} mm), span ${j.stats.span.toFixed(1)} mm`);
+    const one = C.growPlaneFaces(mesh, [sv('bossATop')], opts);
+    check(one.stats.n === a.stats.n && !one.stats.faces, 'one seed is an ordinary plane');
+  }
+  const off = C.growPlaneFaces(mesh, [sv('bossATop'), sv('top'), sv('bossBTop')], opts);
+  check(off.face === 1 && /sits 10\.0\d\d mm off/.test(off.error || ''), `a face 10 mm below is refused and named: ${off.error}`);
+  const same = C.growPlaneFaces(mesh, [sv('bossATop'), C.nearestVertex(mesh, C.vec.add(part.probes.bossATop, [0.5, 0, 0]))], opts);
+  check(same.face === 1 && /same face/.test(same.error || ''), `a second click on the same face is refused: ${same.error}`);
+  const opp = C.growPlaneFaces(mesh, [sv('top'), sv('bottom')], opts);
+  check(opp.face === 1 && /opposite/.test(opp.error || ''), `an opposite-facing face is refused: ${opp.error}`);
+  const perp = C.growPlaneFaces(mesh, [sv('bossATop'), sv('bossBTop')], { ...opts, perpTo: feats[1].fit.normal });
+  check(!perp.error && Math.abs(C.vec.dot(perp.fit.normal, feats[1].fit.normal)) < 1e-9, 'multi-face plane honors the perpendicular constraint');
+}
+
 // Alignment: Z from bottom (flip: outward normal is -Z), X from left (flip), origin from 3 planes.
 const errVs = (M, label) => {
   const A = C.transformPositions(mesh.positions, M);

@@ -15,6 +15,7 @@ That one file is the whole tool. There is nothing to clone, install or build, an
 
 - Input: 3MF (units taken from the file), STL, OBJ or PLY (units chosen in the page).
 - Best-fit features: plane, cylinder, sphere and point, each grown from one click across the face. A plane that keeps growing at double tolerance is flagged "not flat".
+- Multi-face planes: one plane can span separate faces that lie in it, such as the tops of two bosses. Faces spread far apart set its tilt much better than one small face. Use the + button on a plane, or Shift-click with the Plane tool; a face that is not in the plane is refused.
 - Symmetry planes (Mirror): click a point on each side of the part, or search automatically. The scan is mirrored onto itself and the plane is refined by robust point-to-plane matching. This is the best datum on rounded parts.
 - Constraints: new planes, mirror planes and the automatic search can be kept perpendicular to an existing plane.
 - 3-2-1 alignment: the primary feature sets one axis, the secondary feature (or a line between two features) sets the rotation, and each origin coordinate comes from a feature or the bounding box.
